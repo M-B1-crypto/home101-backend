@@ -20,9 +20,25 @@ const TRADE_LABELS = {
   hvac:  'HVAC',      other: 'General / Other',
 };
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,       // e.g. https://home101.vercel.app
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : '*',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, same-origin)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('CORS blocked: ' + origin));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
 }));
+
+// Handle preflight OPTIONS requests
+app.options('*', cors());
 app.use(express.json());
 
 // ── POST /api/request ──────────────────────────────────────────────────────────

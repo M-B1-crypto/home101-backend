@@ -7,29 +7,9 @@ const { Resend } = require('resend');
 
 const app    = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
-
-// Accepted image MIME types + extensions (HEIC has no standard MIME on some devices)
-const ACCEPTED_MIME = ['image/jpeg','image/png','image/gif','image/webp','image/bmp',
-                       'image/heic','image/heif','image/avif','image/tiff'];
-const ACCEPTED_EXT  = ['jpg','jpeg','png','gif','webp','bmp','heic','heif','avif','tiff','tif'];
-
 const upload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: 10 * 1024 * 1024, files: 6 },
-  fileFilter: (_req, file, cb) => {
-    const mime = (file.mimetype || '').toLowerCase();
-    const ext  = (file.originalname || '').split('.').pop().toLowerCase();
-    // Accept: known image MIME, known image extension, generic binary (Android camera),
-    // empty MIME (HEIC on iOS), or .bin extension (Android camera output)
-    const accept = mime.startsWith('image/')
-      || ACCEPTED_MIME.includes(mime)
-      || ACCEPTED_EXT.includes(ext)
-      || mime === 'application/octet-stream'
-      || mime === ''
-      || ext  === 'bin'
-      || ext  === '';
-    cb(null, accept);
-  },
 });
 
 const PORT = process.env.PORT || 3000;
@@ -40,43 +20,13 @@ const TRADE_LABELS = {
   hvac:  'HVAC',      other: 'General / Other',
 };
 
-const allowedOrigins = [
-  process.env.FRONTEND_URL,       // e.g. https://home101.vercel.app
-  'http://localhost:8080',
-  'http://127.0.0.1:8080',
-].filter(Boolean);
-
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (curl, Postman, same-origin)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('CORS blocked: ' + origin));
-  },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : '*',
 }));
-
-// Handle preflight OPTIONS requests
-app.options('*', cors());
 app.use(express.json());
 
 // ── POST /api/request ──────────────────────────────────────────────────────────
-// Wrap multer so file errors return JSON instead of crashing the function
-function uploadMiddleware(req, res, next) {
-  upload.array('photos', 6)(req, res, (err) => {
-    if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'One or more photos exceeds the 10 MB limit.' });
-      }
-      return res.status(400).json({ error: 'File upload error: ' + err.message });
-    }
-    if (err) return res.status(400).json({ error: 'Could not process uploaded files.' });
-    next();
-  });
-}
-
-app.post('/api/request', uploadMiddleware, async (req, res) => {
+app.post('/api/request', upload.array('photos', 6), async (req, res) => {
   const { trade, description, address, firstName, lastName, phone, email, notes } = req.body;
   const turnstileToken = req.body['cf-turnstile-response'];
 

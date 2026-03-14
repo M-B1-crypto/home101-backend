@@ -19,11 +19,16 @@ const upload = multer({
   fileFilter: (_req, file, cb) => {
     const mime = (file.mimetype || '').toLowerCase();
     const ext  = (file.originalname || '').split('.').pop().toLowerCase();
-    if (ACCEPTED_MIME.includes(mime) || ACCEPTED_EXT.includes(ext) || mime.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(null, false); // silently skip unrecognised files rather than erroring
-    }
+    // Accept: known image MIME, known image extension, generic binary (Android camera),
+    // empty MIME (HEIC on iOS), or .bin extension (Android camera output)
+    const accept = mime.startsWith('image/')
+      || ACCEPTED_MIME.includes(mime)
+      || ACCEPTED_EXT.includes(ext)
+      || mime === 'application/octet-stream'
+      || mime === ''
+      || ext  === 'bin'
+      || ext  === '';
+    cb(null, accept);
   },
 });
 

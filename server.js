@@ -409,6 +409,7 @@ app.get('/invoice', (req, res) => {
   if (verifySessionCookie(req.cookies[COOKIE_NAME] || '')) {
     return res.redirect('/invoice/app');
   }
+  const showError = req.query.error === '1';
   res.setHeader('Content-Type', 'text/html');
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -423,73 +424,34 @@ body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#f7f4ef;
 .logo{font-size:1.5rem;font-weight:900;font-style:italic;margin-bottom:6px;color:#1c1c1c}
 .logo span{color:#c8922a}
 .sub{font-size:0.82rem;color:#888;margin-bottom:24px}
-input{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.15em;margin-bottom:12px;transition:border-color .2s,box-shadow .2s}
-input:focus{border-color:#c8922a;box-shadow:0 0 0 3px rgba(200,146,42,0.12);background:#fff}
+input[type=password]{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.15em;margin-bottom:12px;transition:border-color .2s,box-shadow .2s;display:block}
+input[type=password]:focus{border-color:#c8922a;box-shadow:0 0 0 3px rgba(200,146,42,0.12);background:#fff}
 button{width:100%;background:#1c1c1c;color:#fff;border:none;border-radius:10px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;transition:background .2s}
 button:hover{background:#c8922a}
-button:disabled{opacity:0.6;cursor:not-allowed}
-.err{font-size:0.8rem;color:#b83232;margin-top:8px;display:none}
+.err{font-size:0.82rem;color:#b83232;margin-top:10px;padding:9px 12px;background:rgba(184,50,50,0.07);border-radius:8px;${showError ? '' : 'display:none'}}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">Home<span> 101</span></div>
   <p class="sub">Internal tool — staff access only</p>
-  <input type="password" id="pw" placeholder="Password"
-         onkeydown="if(event.key==='Enter')login()" autofocus />
-  <button id="btn" onclick="login()">Unlock</button>
-  <p class="err" id="err"></p>
+  <form method="POST" action="/api/auth">
+    <input type="password" name="password" placeholder="Password" autofocus required />
+    <button type="submit">Unlock</button>
+  </form>
+  <p class="err">${showError ? 'Incorrect password — please try again.' : ''}</p>
 </div>
-<script>
-async function login() {
-  const pw  = document.getElementById('pw').value;
-  const btn = document.getElementById('btn');
-  const err = document.getElementById('err');
-  if (!pw) return;
-  btn.disabled = true; btn.textContent = 'Checking…'; err.style.display = 'none';
-  try {
-    const res  = await fetch('/api/auth', {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Incorrect password.');
-    window.location.href = '/invoice/app';
-  } catch(e) {
-    err.textContent = e.message;
-    err.style.display = 'block';
-    document.getElementById('pw').value = '';
-    document.getElementById('pw').focus();
-  } finally {
-    btn.disabled = false; btn.textContent = 'Unlock';
-  }
-}
-</script>
 </body>
 </html>`);
 });
 
 // ── POST /api/auth — verify password, set HttpOnly cookie ─────────────────────
-app.post('/api/auth', (req, res, next) => {
-  // Parse body regardless of how Vercel delivers it
-  express.json()(req, res, (err) => {
-    if (err || !req.body) {
-      // Fallback: try parsing raw buffer
-      let raw = '';
-      req.on('data', chunk => { raw += chunk; });
-      req.on('end', () => {
-        try { req.body = JSON.parse(raw); } catch { req.body = {}; }
-        next();
-      });
-    } else next();
-  });
-}, async (req, res) => {
-  const { password } = req.body || {};
-  const expected     = process.env.INVOICE_PASSWORD;
+app.post('/api/auth', express.urlencoded({ extended: false }), async (req, res) => {
+  const password = (req.body && req.body.password) ? String(req.body.password) : '';
+  const expected = process.env.INVOICE_PASSWORD;
 
   if (!expected) {
-    return res.status(500).json({ error: 'INVOICE_PASSWORD is not configured on the server.' });
+    return res.redirect('/invoice?error=1');
   }
   // Support both bcrypt-style hashes (starts with $scrypt$) and plaintext fallback
   let match = false;

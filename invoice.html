@@ -129,6 +129,7 @@ body { font-family: 'Instrument Sans', sans-serif; background: var(--bg); color:
   <div class="page-header">
     <div class="logo">Home<span> 101</span></div>
     <span class="badge">Internal — Send Quote</span>
+    <button onclick="fetch('/api/logout',{method:'POST',credentials:'include'}).then(()=>location.href='/invoice')" style="background:transparent;border:1.5px solid var(--line);border-radius:8px;padding:6px 14px;font-family:'Instrument Sans',sans-serif;font-size:0.78rem;font-weight:600;color:var(--muted);cursor:pointer;">Log out</button>
     <button onclick="logout()" style="background:transparent;border:1.5px solid var(--line);border-radius:8px;padding:6px 14px;font-family:'Instrument Sans',sans-serif;font-size:0.78rem;font-weight:600;color:var(--muted);cursor:pointer;" onmouseover="this.style.color='var(--ink)'" onmouseout="this.style.color='var(--muted)'">Log out</button>
   </div>
   <div class="prefill-banner" id="prefillBanner"></div>

@@ -43,20 +43,28 @@ const TRADE_LABELS = {
 };
 
 const allowedOrigins = [
-  process.env.FRONTEND_URL,       // e.g. https://home101.vercel.app
+  process.env.FRONTEND_URL,       // frontend site e.g. https://home101.vercel.app
+  process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : null, // backend's own domain
   'http://localhost:8080',
+  'http://localhost:3000',
   'http://127.0.0.1:8080',
+  'http://127.0.0.1:3000',
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (curl, Postman, same-origin)
+    // Always allow same-origin requests (no Origin header) and known origins
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOrigins.some(o => o && origin.startsWith(o.replace(/\/+$/, '')))) {
+      return callback(null, true);
+    }
+    // Also allow any vercel.app subdomain (covers preview deployments)
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
     callback(new Error('CORS blocked: ' + origin));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 }));
 
 // Handle preflight OPTIONS requests

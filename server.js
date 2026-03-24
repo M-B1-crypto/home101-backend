@@ -409,87 +409,75 @@ app.get('/invoice', (req, res) => {
   if (verifySessionCookie(req.cookies[COOKIE_NAME] || '')) {
     return res.redirect('/invoice/app');
   }
-  const showError = req.query.error === '1';
+  const err = req.query.error === '1';
   res.setHeader('Content-Type', 'text/html');
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Home 101 — Login</title>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#f7f4ef;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{background:#fff;border-radius:20px;padding:40px;box-shadow:0 8px 40px rgba(28,28,28,0.12);border:1px solid rgba(28,28,28,0.1);width:100%;max-width:360px;text-align:center}
-.logo{font-size:1.5rem;font-weight:900;font-style:italic;margin-bottom:6px;color:#1c1c1c}
-.logo span{color:#c8922a}
-.sub{font-size:0.82rem;color:#888;margin-bottom:24px}
-input[type=password]{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.15em;margin-bottom:12px;transition:border-color .2s,box-shadow .2s;display:block}
-input[type=password]:focus{border-color:#c8922a;box-shadow:0 0 0 3px rgba(200,146,42,0.12);background:#fff}
-button{width:100%;background:#1c1c1c;color:#fff;border:none;border-radius:10px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;transition:background .2s}
-button:hover{background:#c8922a}
-.err{font-size:0.82rem;color:#b83232;margin-top:10px;padding:9px 12px;background:rgba(184,50,50,0.07);border-radius:8px;${showError ? '' : 'display:none'}}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">Home<span> 101</span></div>
-  <p class="sub">Internal tool — staff access only</p>
-  <form method="POST" action="/api/auth">
-    <input type="password" name="password" placeholder="Password" autofocus required />
-    <button type="submit">Unlock</button>
-  </form>
-  <p class="err">${showError ? 'Incorrect password — please try again.' : ''}</p>
-</div>
-</body>
-</html>`);
+  res.send('<!DOCTYPE html><html lang="en"><head>'
+    + '<meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+    + '<title>Home 101 — Login</title>'
+    + '<style>'
+    + '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}'
+    + 'body{font-family:Helvetica,Arial,sans-serif;background:#f7f4ef;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}'
+    + '.card{background:#fff;border-radius:20px;padding:40px;box-shadow:0 8px 40px rgba(28,28,28,0.12);border:1px solid rgba(28,28,28,0.1);width:100%;max-width:360px;text-align:center}'
+    + '.logo{font-size:1.5rem;font-weight:900;font-style:italic;margin-bottom:6px;color:#1c1c1c}'
+    + '.logo span{color:#c8922a}'
+    + '.sub{font-size:0.82rem;color:#888;margin-bottom:24px}'
+    + 'input{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.12em;margin-bottom:12px;display:block}'
+    + 'input:focus{border-color:#c8922a;outline:none}'
+    + 'button{width:100%;background:#1c1c1c;color:#fff;border:none;border-radius:10px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer}'
+    + 'button:hover{background:#c8922a}'
+    + '.err{font-size:0.82rem;color:#b83232;margin-top:10px;padding:8px;background:rgba(184,50,50,0.07);border-radius:6px}'
+    + '</style></head><body>'
+    + '<div class="card">'
+    + '<div class="logo">Home<span> 101</span></div>'
+    + '<p class="sub">Internal tool — staff access only</p>'
+    + '<form method="POST" action="/api/auth">'
+    + '<input type="password" name="password" placeholder="Password" autofocus required />'
+    + '<button type="submit">Unlock</button>'
+    + '</form>'
+    + (err ? '<p class="err">Incorrect password — please try again.</p>' : '')
+    + '</div></body></html>');
 });
 
-// ── POST /api/auth — verify password, set HttpOnly cookie ─────────────────────
-app.post('/api/auth', express.urlencoded({ extended: false }), async (req, res) => {
-  const password = (req.body && req.body.password) ? String(req.body.password) : '';
-  const expected = process.env.INVOICE_PASSWORD;
 
-  if (!expected) {
+// ── POST /api/auth ─────────────────────────────────────────────────────────────
+app.post('/api/auth', express.urlencoded({ extended: false }), (req, res) => {
+  try {
+    const password = req.body && req.body.password ? String(req.body.password) : '';
+    const expected = process.env.INVOICE_PASSWORD || '';
+
+    if (!expected) {
+      console.error('INVOICE_PASSWORD env var not set');
+      return res.redirect('/invoice?error=1');
+    }
+
+    // Synchronous constant-time comparison — no external packages
+    let match = false;
+    if (password.length > 0 && password.length === expected.length) {
+      const a = Buffer.alloc(256);
+      const b = Buffer.alloc(256);
+      Buffer.from(password).copy(a);
+      Buffer.from(expected).copy(b);
+      match = crypto.timingSafeEqual(a, b);
+    }
+
+    if (!match) {
+      return res.redirect('/invoice?error=1');
+    }
+
+    res.cookie(COOKIE_NAME, makeSessionCookie(), {
+      httpOnly: true,
+      secure:   process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge:   SESSION_TTL,
+      path:     '/',
+    });
+    return res.redirect('/invoice/app');
+
+  } catch (err) {
+    console.error('/api/auth error:', err);
     return res.redirect('/invoice?error=1');
   }
-  // Support both bcrypt-style hashes (starts with $scrypt$) and plaintext fallback
-  let match = false;
-  try {
-    if (expected.startsWith('$scrypt$')) {
-      // Stored as a scrypt hash — most secure, uses Node built-in crypto only
-      const [, , saltHex, hashHex] = expected.split('$');
-      const salt = Buffer.from(saltHex, 'hex');
-      const storedHash = Buffer.from(hashHex, 'hex');
-      const derivedKey = await new Promise((resolve, reject) =>
-        crypto.scrypt(password, salt, 64, (err, key) => err ? reject(err) : resolve(key))
-      );
-      match = password.length > 0 && crypto.timingSafeEqual(derivedKey, storedHash);
-    } else {
-      // Plaintext fallback — constant-time compare
-      if (password.length === expected.length) {
-        const a = Buffer.alloc(256); const b = Buffer.alloc(256);
-        Buffer.from(password).copy(a); Buffer.from(expected).copy(b);
-        match = password.length > 0 && crypto.timingSafeEqual(a, b);
-      }
-    }
-  } catch (e) {
-    console.error('Auth comparison error:', e);
-  }
-
-  if (!match) {
-    return res.status(401).json({ error: 'Incorrect password.' });
-  }
-
-  // Set a signed HttpOnly cookie — JS cannot read or modify this
-  res.cookie(COOKIE_NAME, makeSessionCookie(), {
-    httpOnly: true,
-    secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'lax',   // 'lax' works better than 'strict' on Vercel redirects
-    maxAge:   SESSION_TTL,
-    path:     '/',
-  });
-  return res.json({ ok: true });
 });
 
 // ── GET /invoice/app — serve the invoice tool (authenticated only) ────────────
@@ -755,36 +743,6 @@ const BACKEND_URL = ''; // empty = same origin (backend serves this page)
 </html>`;
 }
 
-
-
-// ── GET /api/hash-password — one-time tool to generate a scrypt hash ──────────
-// Usage: visit /api/hash-password?p=YourPassword in your browser
-// Copy the output into your INVOICE_PASSWORD environment variable on Vercel
-// Then delete this route (or leave it — it only generates hashes, never reveals the password)
-app.get('/api/hash-password', async (req, res) => {
-  const p = req.query.p;
-  if (!p) return res.status(400).send('Usage: /api/hash-password?p=yourpassword');
-  const salt = crypto.randomBytes(32);
-  const hash = await new Promise((resolve, reject) =>
-    crypto.scrypt(p, salt, 64, (err, key) => err ? reject(err) : resolve(key))
-  );
-  const stored = `$scrypt$$${salt.toString('hex')}$${hash.toString('hex')}`;
-  res.setHeader('Content-Type', 'text/html');
-  res.send(`
-    <style>body{font-family:monospace;padding:30px;background:#f7f4ef}
-    .box{background:#fff;border-radius:12px;padding:24px;max-width:700px;border:1px solid #ddd}
-    h2{color:#1c1c1c;margin-bottom:12px}code{background:#f0ece4;padding:10px;display:block;
-    border-radius:8px;word-break:break-all;font-size:13px;margin:12px 0}
-    p{color:#555;font-size:14px;line-height:1.6}</style>
-    <div class="box">
-      <h2>Home 101 — Password Hash</h2>
-      <p>Copy this entire value into your <strong>INVOICE_PASSWORD</strong> environment variable on Vercel:</p>
-      <code>${stored}</code>
-      <p>After updating the env var, redeploy Vercel and your hashed password will be active.<br>
-      You can then delete this route from server.js if you wish.</p>
-    </div>
-  `);
-});
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 

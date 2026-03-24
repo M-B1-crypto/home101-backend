@@ -449,37 +449,26 @@ app.get('/invoice', (req, res) => {
 
 
 // ── POST /api/auth ─────────────────────────────────────────────────────────────
-app.post('/api/auth', express.urlencoded({ extended: false }), async (req, res) => {
+app.post('/api/auth', express.urlencoded({ extended: false }), (req, res) => {
   try {
-    const password = req.body && req.body.password ? String(req.body.password) : '';
-    const expected = process.env.INVOICE_PASSWORD || '';
+    const password = req.body && req.body.password ? String(req.body.password).trim() : '';
+    const expected = (process.env.INVOICE_PASSWORD || '').trim();
 
     if (!expected) {
-      console.error('INVOICE_PASSWORD env var not set');
       return res.redirect('/invoice?error=1');
     }
 
-    // If INVOICE_PASSWORD starts with $scrypt$ it's a hash — verify by hashing input
-    // Otherwise fall back to plain-text constant-time compare
-    const verifyPassword = (pw, stored) => new Promise((resolve) => {
-      if (stored.startsWith('$scrypt$')) {
-        const parts = stored.split('$');
-        const salt  = Buffer.from(parts[2], 'hex');
-        const storedHash = Buffer.from(parts[3], 'hex');
-        crypto.scrypt(pw, salt, 64, (err, derived) => {
-          if (err) return resolve(false);
-          resolve(pw.length > 0 && crypto.timingSafeEqual(derived, storedHash));
-        });
-      } else {
-        // Plain text compare
-        if (pw.length === 0 || pw.length !== stored.length) return resolve(false);
-        const a = Buffer.alloc(256); const b = Buffer.alloc(256);
-        Buffer.from(pw).copy(a); Buffer.from(stored).copy(b);
-        resolve(crypto.timingSafeEqual(a, b));
-      }
-    });
+    // Pad both to fixed 512-byte buffers — safe constant-time compare regardless of length
+    const a = Buffer.alloc(512);
+    const b = Buffer.alloc(512);
+    Buffer.from(password).copy(a);
+    Buffer.from(expected).copy(b);
 
-    const match = await verifyPassword(password, expected);
+    // Also check lengths match — timingSafeEqual alone won't catch length differences
+    const match = password.length > 0
+               && password.length === expected.length
+               && crypto.timingSafeEqual(a, b);
+
     if (!match) {
       return res.redirect('/invoice?error=1');
     }

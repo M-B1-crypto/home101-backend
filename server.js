@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const crypto      = require('crypto');
-const bcrypt      = require('bcrypt');
+const bcrypt      = require('bcryptjs'); // pure JS — works on Vercel serverless
 const cookieParser= require('cookie-parser');
 const express     = require('express');
 const cors       = require('cors');

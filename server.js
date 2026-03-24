@@ -471,42 +471,41 @@ async function login() {
 });
 
 // ── POST /api/auth — verify password, set HttpOnly cookie ─────────────────────
-app.post('/api/auth', (req, res, next) => {
-  // Parse body regardless of how Vercel delivers it
-  express.json()(req, res, (err) => {
-    if (err || !req.body) {
-      // Fallback: try parsing raw buffer
-      let raw = '';
-      req.on('data', chunk => { raw += chunk; });
-      req.on('end', () => {
-        try { req.body = JSON.parse(raw); } catch { req.body = {}; }
-        next();
-      });
-    } else next();
-  });
-}, (req, res) => {
-  const { password } = req.body || {};
-  const expected     = process.env.INVOICE_PASSWORD;
+app.post('/api/auth', express.json(), (req, res) => {
+  const password = (req.body && req.body.password) ? req.body.password : '';
+  const expected = process.env.INVOICE_PASSWORD || '';
 
   if (!expected) {
     return res.status(500).json({ error: 'INVOICE_PASSWORD is not configured on the server.' });
   }
-  const match = password && password.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(password), Buffer.from(expected));
+
+  // Pad to equal length before timing-safe compare to avoid length leak
+  const a = Buffer.alloc(128); const b = Buffer.alloc(128);
+  Buffer.from(password).copy(a); Buffer.from(expected).copy(b);
+  const match = password.length === expected.length &&
+                crypto.timingSafeEqual(a, b);
 
   if (!match) {
     return res.status(401).json({ error: 'Incorrect password.' });
   }
 
-  // Set a signed HttpOnly cookie — JS cannot read or modify this
   res.cookie(COOKIE_NAME, makeSessionCookie(), {
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'lax',   // 'lax' works better than 'strict' on Vercel redirects
+    sameSite: 'lax',
     maxAge:   SESSION_TTL,
     path:     '/',
   });
   return res.json({ ok: true });
+});
+
+// Diagnostic route — remove after confirming auth works
+app.get('/api/ping', (req, res) => {
+  res.json({
+    status:   'ok',
+    hasPassword: !!process.env.INVOICE_PASSWORD,
+    nodeEnv:  process.env.NODE_ENV || 'not set',
+  });
 });
 
 // ── GET /invoice/app — serve the invoice tool (authenticated only) ────────────

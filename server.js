@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const crypto      = require('crypto');
+const bcrypt      = require('bcrypt');
 const cookieParser= require('cookie-parser');
 const express     = require('express');
 const cors       = require('cors');
@@ -63,6 +64,7 @@ app.use(cors({
 app.options('*', cors());
 app.use(cookieParser());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // parse standard HTML form submissions
 
 // ── POST /api/request ──────────────────────────────────────────────────────────
 // Wrap multer so file errors return JSON instead of crashing the function
@@ -225,7 +227,7 @@ app.post('/api/request', uploadMiddleware, async (req, res) => {
 // Body (JSON): { customerName, customerEmail, customerPhone, address,
 //               jobDescription, lineItems: [{label, amount}],
 //               stripePaymentLink, dueDate, notes, reference }
-app.post('/api/invoice', express.json(), requireSession, async (req, res) => {
+app.post('/api/invoice', requireSession, async (req, res) => {
   const {
     customerName, customerEmail, customerPhone, address,
     jobDescription, lineItems = [], stripePaymentLink,
@@ -423,70 +425,60 @@ body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#f7f4ef;
 .logo{font-size:1.5rem;font-weight:900;font-style:italic;margin-bottom:6px;color:#1c1c1c}
 .logo span{color:#c8922a}
 .sub{font-size:0.82rem;color:#888;margin-bottom:24px}
-input{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.15em;margin-bottom:12px;transition:border-color .2s,box-shadow .2s}
-input:focus{border-color:#c8922a;box-shadow:0 0 0 3px rgba(200,146,42,0.12);background:#fff}
+input[type=password]{width:100%;border:1.5px solid rgba(28,28,28,0.1);border-radius:10px;padding:12px 14px;font-size:0.95rem;background:#f7f4ef;outline:none;text-align:center;letter-spacing:0.15em;margin-bottom:12px;transition:border-color .2s,box-shadow .2s}
+input[type=password]:focus{border-color:#c8922a;box-shadow:0 0 0 3px rgba(200,146,42,0.12);background:#fff}
 button{width:100%;background:#1c1c1c;color:#fff;border:none;border-radius:10px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;transition:background .2s}
 button:hover{background:#c8922a}
-button:disabled{opacity:0.6;cursor:not-allowed}
-.err{font-size:0.8rem;color:#b83232;margin-top:8px;display:none}
+.err{font-size:0.8rem;color:#b83232;margin-top:10px;padding:8px;background:rgba(184,50,50,0.07);border-radius:6px;display:none}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">Home<span> 101</span></div>
   <p class="sub">Internal tool — staff access only</p>
-  <input type="password" id="pw" placeholder="Password"
-         onkeydown="if(event.key==='Enter')login()" autofocus />
-  <button id="btn" onclick="login()">Unlock</button>
-  <p class="err" id="err"></p>
+  <form method="POST" action="/api/auth">
+    <input type="password" name="password" placeholder="Password" autofocus required />
+    <button type="submit">Unlock</button>
+  </form>
+  \${req.query.error ? '<p class="err" style="display:block;">Incorrect password — please try again.</p>' : ''}
 </div>
-<script>
-async function login() {
-  const pw  = document.getElementById('pw').value;
-  const btn = document.getElementById('btn');
-  const err = document.getElementById('err');
-  if (!pw) return;
-  btn.disabled = true; btn.textContent = 'Checking…'; err.style.display = 'none';
-  try {
-    const res  = await fetch('/api/auth', {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Incorrect password.');
-    window.location.href = '/invoice/app';
-  } catch(e) {
-    err.textContent = e.message;
-    err.style.display = 'block';
-    document.getElementById('pw').value = '';
-    document.getElementById('pw').focus();
-  } finally {
-    btn.disabled = false; btn.textContent = 'Unlock';
-  }
-}
-</script>
 </body>
 </html>`);
-});
 
 // ── POST /api/auth — verify password, set HttpOnly cookie ─────────────────────
-app.post('/api/auth', express.json(), (req, res) => {
-  const password = (req.body && req.body.password) ? req.body.password : '';
+app.post('/api/auth', async (req, res) => {
+  const password = (req.body && req.body.password) ? String(req.body.password) : '';
   const expected = process.env.INVOICE_PASSWORD || '';
 
   if (!expected) {
-    return res.status(500).json({ error: 'INVOICE_PASSWORD is not configured on the server.' });
+    // Misconfigured — redirect back with error
+    return res.redirect('/invoice?error=1');
   }
 
-  // Pad to equal length before timing-safe compare to avoid length leak
-  const a = Buffer.alloc(128); const b = Buffer.alloc(128);
-  Buffer.from(password).copy(a); Buffer.from(expected).copy(b);
-  const match = password.length === expected.length &&
-                crypto.timingSafeEqual(a, b);
+  // Compare password against stored hash or plaintext
+  // If INVOICE_PASSWORD starts with '$2b$' it's a bcrypt hash (recommended)
+  // Otherwise falls back to constant-time plaintext compare
+  let match = false;
+  try {
+    if (expected.startsWith('$2b$') || expected.startsWith('$2a$')) {
+      // bcrypt hash comparison — most secure
+      match = password.length > 0 && await bcrypt.compare(password, expected);
+    } else {
+      // Plaintext fallback — constant-time to prevent timing attacks
+      const a = Buffer.alloc(256); const b = Buffer.alloc(256);
+      Buffer.from(password).copy(a);
+      Buffer.from(expected).copy(b);
+      match = password.length > 0 &&
+              password.length === expected.length &&
+              crypto.timingSafeEqual(a, b);
+    }
+  } catch (e) {
+    console.error('Auth error:', e);
+    return res.redirect('/invoice?error=1');
+  }
 
   if (!match) {
-    return res.status(401).json({ error: 'Incorrect password.' });
+    return res.redirect('/invoice?error=1');
   }
 
   res.cookie(COOKIE_NAME, makeSessionCookie(), {
@@ -496,7 +488,17 @@ app.post('/api/auth', express.json(), (req, res) => {
     maxAge:   SESSION_TTL,
     path:     '/',
   });
-  return res.json({ ok: true });
+  return res.redirect('/invoice/app');
+});
+
+// Utility route — generate a bcrypt hash of a plaintext password
+// Visit /api/hash-password?p=yourpassword to get the hash
+// Then store the hash in INVOICE_PASSWORD and delete this route
+app.get('/api/hash-password', async (req, res) => {
+  const p = req.query.p;
+  if (!p) return res.status(400).send('Pass ?p=yourpassword');
+  const hash = await bcrypt.hash(p, 12);
+  res.send('<pre>Copy this hash into your INVOICE_PASSWORD env var:<br><br>' + hash + '</pre>');
 });
 
 // Diagnostic route — remove after confirming auth works

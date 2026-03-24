@@ -484,15 +484,36 @@ app.post('/api/auth', (req, res, next) => {
       });
     } else next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   const { password } = req.body || {};
   const expected     = process.env.INVOICE_PASSWORD;
 
   if (!expected) {
     return res.status(500).json({ error: 'INVOICE_PASSWORD is not configured on the server.' });
   }
-  const match = password && password.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(password), Buffer.from(expected));
+  // Support both bcrypt-style hashes (starts with $scrypt$) and plaintext fallback
+  let match = false;
+  try {
+    if (expected.startsWith('$scrypt$')) {
+      // Stored as a scrypt hash — most secure, uses Node built-in crypto only
+      const [, , saltHex, hashHex] = expected.split('$');
+      const salt = Buffer.from(saltHex, 'hex');
+      const storedHash = Buffer.from(hashHex, 'hex');
+      const derivedKey = await new Promise((resolve, reject) =>
+        crypto.scrypt(password, salt, 64, (err, key) => err ? reject(err) : resolve(key))
+      );
+      match = password.length > 0 && crypto.timingSafeEqual(derivedKey, storedHash);
+    } else {
+      // Plaintext fallback — constant-time compare
+      if (password.length === expected.length) {
+        const a = Buffer.alloc(256); const b = Buffer.alloc(256);
+        Buffer.from(password).copy(a); Buffer.from(expected).copy(b);
+        match = password.length > 0 && crypto.timingSafeEqual(a, b);
+      }
+    }
+  } catch (e) {
+    console.error('Auth comparison error:', e);
+  }
 
   if (!match) {
     return res.status(401).json({ error: 'Incorrect password.' });
@@ -772,6 +793,36 @@ const BACKEND_URL = ''; // empty = same origin (backend serves this page)
 </html>`;
 }
 
+
+
+// ── GET /api/hash-password — one-time tool to generate a scrypt hash ──────────
+// Usage: visit /api/hash-password?p=YourPassword in your browser
+// Copy the output into your INVOICE_PASSWORD environment variable on Vercel
+// Then delete this route (or leave it — it only generates hashes, never reveals the password)
+app.get('/api/hash-password', async (req, res) => {
+  const p = req.query.p;
+  if (!p) return res.status(400).send('Usage: /api/hash-password?p=yourpassword');
+  const salt = crypto.randomBytes(32);
+  const hash = await new Promise((resolve, reject) =>
+    crypto.scrypt(p, salt, 64, (err, key) => err ? reject(err) : resolve(key))
+  );
+  const stored = `$scrypt$$${salt.toString('hex')}$${hash.toString('hex')}`;
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`
+    <style>body{font-family:monospace;padding:30px;background:#f7f4ef}
+    .box{background:#fff;border-radius:12px;padding:24px;max-width:700px;border:1px solid #ddd}
+    h2{color:#1c1c1c;margin-bottom:12px}code{background:#f0ece4;padding:10px;display:block;
+    border-radius:8px;word-break:break-all;font-size:13px;margin:12px 0}
+    p{color:#555;font-size:14px;line-height:1.6}</style>
+    <div class="box">
+      <h2>Home 101 — Password Hash</h2>
+      <p>Copy this entire value into your <strong>INVOICE_PASSWORD</strong> environment variable on Vercel:</p>
+      <code>${stored}</code>
+      <p>After updating the env var, redeploy Vercel and your hashed password will be active.<br>
+      You can then delete this route from server.js if you wish.</p>
+    </div>
+  `);
+});
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 

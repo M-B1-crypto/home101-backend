@@ -454,20 +454,28 @@ app.post('/api/auth', express.urlencoded({ extended: false }), (req, res) => {
     const password = req.body && req.body.password ? String(req.body.password).trim() : '';
     const expected = (process.env.INVOICE_PASSWORD || '').trim();
 
-    if (!expected) {
+    if (!expected || !password) {
       return res.redirect('/invoice?error=1');
     }
 
-    // Pad both to fixed 512-byte buffers — safe constant-time compare regardless of length
-    const a = Buffer.alloc(512);
-    const b = Buffer.alloc(512);
-    Buffer.from(password).copy(a);
-    Buffer.from(expected).copy(b);
+    let match = false;
 
-    // Also check lengths match — timingSafeEqual alone won't catch length differences
-    const match = password.length > 0
-               && password.length === expected.length
-               && crypto.timingSafeEqual(a, b);
+    if (expected.startsWith('$h101$')) {
+      // Hashed password — format: $h101$<saltHex>$<hashHex>
+      // Uses scryptSync — fully synchronous, no callbacks, no hanging
+      const parts = expected.split('$'); // ['', 'h101', saltHex, hashHex]
+      const salt       = Buffer.from(parts[2], 'hex');
+      const storedHash = Buffer.from(parts[3], 'hex');
+      const derived    = crypto.scryptSync(password, salt, 64);
+      match = crypto.timingSafeEqual(derived, storedHash);
+    } else {
+      // Plain text fallback — constant-time compare with fixed-size buffers
+      const a = Buffer.alloc(512);
+      const b = Buffer.alloc(512);
+      Buffer.from(password).copy(a);
+      Buffer.from(expected).copy(b);
+      match = password.length === expected.length && crypto.timingSafeEqual(a, b);
+    }
 
     if (!match) {
       return res.redirect('/invoice?error=1');
@@ -515,27 +523,44 @@ function getInvoiceAppHtml() {
 
 
 
-// ── GET /api/hash-password — generate a scrypt hash of your password ──────────
-// Visit: /api/hash-password?p=YourPlainPassword
-// Copy the $scrypt$... output into INVOICE_PASSWORD env var on Vercel.
-// After that you enter your PLAIN password to log in — the server hashes it
-// and compares. Delete this route once done.
+
+// ── GET /api/hash-password — one-time tool to generate a password hash ────────
+// 1. Visit: https://your-backend.vercel.app/api/hash-password?p=YourPassword
+// 2. Copy the $h101$... string shown on screen
+// 3. Paste it as your INVOICE_PASSWORD environment variable on Vercel
+// 4. Redeploy — you will then log in with YourPassword (plain), not the hash
 app.get('/api/hash-password', (req, res) => {
-  const p = req.query.p;
-  if (!p) return res.status(400).send('Usage: /api/hash-password?p=yourpassword');
-  const salt = crypto.randomBytes(32);
-  crypto.scrypt(p, salt, 64, (err, hash) => {
-    if (err) return res.status(500).send('Error: ' + err.message);
-    const stored = '$scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
+  try {
+    const p = req.query.p;
+    if (!p) {
+      return res.status(400).send(
+        '<div style="font-family:Helvetica,sans-serif;padding:30px;background:#f7f4ef">'
+        + '<h2>Usage</h2><p>Visit <code>/api/hash-password?p=YourChosenPassword</code></p>'
+        + '</div>'
+      );
+    }
+    // scryptSync — synchronous, no callbacks, guaranteed to complete
+    const salt    = crypto.randomBytes(32);
+    const hash    = crypto.scryptSync(p, salt, 64);
+    const stored  = '$h101$' + salt.toString('hex') + '$' + hash.toString('hex');
     res.setHeader('Content-Type', 'text/html');
-    res.send('<div style="font-family:monospace;padding:30px;background:#f7f4ef">'
-      + '<h2 style="margin-bottom:12px">Password Hash</h2>'
-      + '<p style="margin-bottom:8px">Set <strong>INVOICE_PASSWORD</strong> to:</p>'
-      + '<pre style="background:#fff;padding:12px;border-radius:8px;word-break:break-all">' + stored + '</pre>'
-      + '<p style="margin-top:8px;color:#555">You will still log in with your plain password.</p>'
-      + '</div>');
-  });
+    res.send(
+      '<div style="font-family:Helvetica,sans-serif;padding:30px;background:#f7f4ef;max-width:700px">'
+      + '<h2 style="margin-bottom:16px">Home 101 — Password Hash</h2>'
+      + '<p style="margin-bottom:8px;color:#555">Set <strong>INVOICE_PASSWORD</strong> on Vercel to:</p>'
+      + '<pre style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;'
+      +   'word-break:break-all;font-size:13px;margin-bottom:16px">' + stored + '</pre>'
+      + '<p style="color:#555;font-size:14px;line-height:1.7">'
+      + '✓ After setting this, you log in with your <strong>plain password</strong> — not the hash.<br>'
+      + '✓ The hash above never reveals your real password.<br>'
+      + '✓ You can delete this route from server.js once done if you prefer.'
+      + '</p></div>'
+    );
+  } catch (err) {
+    res.status(500).send('Error generating hash: ' + err.message);
+  }
 });
+
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 

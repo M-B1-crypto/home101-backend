@@ -471,7 +471,20 @@ async function login() {
 });
 
 // ── POST /api/auth — verify password, set HttpOnly cookie ─────────────────────
-app.post('/api/auth', express.json(), (req, res) => {
+app.post('/api/auth', (req, res, next) => {
+  // Parse body regardless of how Vercel delivers it
+  express.json()(req, res, (err) => {
+    if (err || !req.body) {
+      // Fallback: try parsing raw buffer
+      let raw = '';
+      req.on('data', chunk => { raw += chunk; });
+      req.on('end', () => {
+        try { req.body = JSON.parse(raw); } catch { req.body = {}; }
+        next();
+      });
+    } else next();
+  });
+}, (req, res) => {
   const { password } = req.body || {};
   const expected     = process.env.INVOICE_PASSWORD;
 
@@ -487,9 +500,9 @@ app.post('/api/auth', express.json(), (req, res) => {
 
   // Set a signed HttpOnly cookie — JS cannot read or modify this
   res.cookie(COOKIE_NAME, makeSessionCookie(), {
-    httpOnly: true,   // invisible to JavaScript entirely
-    secure:   process.env.NODE_ENV === 'production', // HTTPS only in prod
-    sameSite: 'strict',
+    httpOnly: true,
+    secure:   process.env.NODE_ENV === 'production',
+    sameSite: 'lax',   // 'lax' works better than 'strict' on Vercel redirects
     maxAge:   SESSION_TTL,
     path:     '/',
   });
